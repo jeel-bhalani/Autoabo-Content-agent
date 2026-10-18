@@ -5,10 +5,34 @@ import { useState } from "react";
 export default function Home() {
   const [car, setCar] = useState("");
   const [result, setResult] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleGenerate() {
-    if (!car.trim()) return;
-    setResult(`Here the AI will write a post about: ${car}`);
+  async function handleGenerate() {
+    if (!car.trim() || loading) return;
+
+    setLoading(true);
+    setError("");
+    setResult("");
+
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ car }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error ?? "Something went wrong.");
+      } else {
+        setResult(data.post);
+      }
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -30,14 +54,21 @@ export default function Home() {
           />
           <button
             onClick={handleGenerate}
-            className="rounded-lg bg-blue-600 px-5 py-2 font-medium text-white hover:bg-blue-700"
+            disabled={loading}
+            className="rounded-lg bg-blue-600 px-5 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            Generate
+            {loading ? "Writing..." : "Generate"}
           </button>
         </div>
 
+        {error && (
+          <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+            {error}
+          </div>
+        )}
+
         {result && (
-          <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 text-gray-800">
+          <div className="mt-6 whitespace-pre-wrap rounded-lg border border-gray-200 bg-white p-4 text-gray-800">
             {result}
           </div>
         )}
