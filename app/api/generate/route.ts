@@ -67,6 +67,12 @@ export async function POST(request: Request) {
   if (typeof car !== "string" || !car.trim()) {
     return NextResponse.json({ error: "Please enter a car." }, { status: 400 });
   }
+    if (car.length > 60) {
+    return NextResponse.json(
+      { error: "That's too long for a car name. Please keep it under 60 characters." },
+      { status: 400 }
+    );
+  }
 
   try {
     const toolCalls: string[] = [];
