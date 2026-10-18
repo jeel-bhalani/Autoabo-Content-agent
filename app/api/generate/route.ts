@@ -1,35 +1,38 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import { findCarOffer, listAvailableCars } from "@/lib/cars";
+import { compareCarOffers, listCarsWithOffers } from "@/lib/cars";
+
 export const maxDuration = 60;
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const MODEL = "gemini-3.5-flash-lite";
-//const MODEL = "gemini-3.8-flash";
 const MAX_STEPS = 5;
 
 const SYSTEM_INSTRUCTION =
-  "You are the social media manager of myAutoAbo, a Berlin startup for car subscriptions. " +
-  "You write short, friendly Instagram posts in German, using the informal 'du'. " +
+  "You are the social media manager of myAutoAbo, a comparison platform for car subscriptions in Germany. " +
+  "myAutoAbo does NOT rent out cars itself. It compares subscription offers from many providers. " +
+  "Every post should motivate people to compare offers on myAutoAbo. " +
+  "Write short, friendly Instagram posts in German, using the informal 'du'. " +
   "Rules: maximum 120 words, 1-3 emojis, end with 3-5 hashtags. " +
   "If the user's input is clearly not a car (for example food, animals or random words), " +
   "do NOT call any tool and do NOT write a post. Reply with exactly: NOT_A_CAR " +
-  "Otherwise, ALWAYS call get_car_offer first. " +
-  "If the car is found and available, write the post about it. " +
-  "If the car is not found, or found but not available, call list_available_cars, " +
-  "pick the ONE most similar available car (same segment first, then similar fuel type and price), " +
-  "and write a post recommending that car. You may mention the requested car as a hook " +
-  "(for example 'Fan of the Golf?'), but never claim that we offer it. " +
-  "Only use numbers that come from tool results. Never invent prices or other numbers.";
+  "Otherwise, ALWAYS call compare_car_offers first. " +
+  "If the car has offers, write about how many offers can be compared and the cheapest monthly price (as 'ab X €'). " +
+  "You may also mention the shortest minimum term, but never present the cheapest price and the shortest term as the same offer. " +
+  "If the car is not found or has no offers, call list_cars_with_offers, pick the ONE most similar car " +
+  "(same segment first, then similar fuel type and price), and write a post about comparing offers for that car. " +
+  "You may mention the requested car as a hook, but never claim it has offers. " +
+  "Stay neutral: never recommend or name a specific provider. " +
+  "Only use numbers that come from tool results. Never invent numbers.";
 
-const carOfferTool = {
+const compareTool = {
   type: "function" as const,
-  name: "get_car_offer",
+  name: "compare_car_offers",
   description:
-    "Looks up myAutoAbo's subscription offer for one car: segment, monthly price in EUR, " +
-    "minimum term in months, included km per month, fuel type and availability. " +
-    "Returns found: false if we don't offer this car.",
+    "Compares all subscription offers for one car on myAutoAbo. Returns the car's segment and fuel type, " +
+    "the number of offers, the cheapest monthly price in EUR, the shortest minimum term in months, " +
+    "and the individual offers. Returns found: false if the car is not on the platform.",
   parameters: {
     type: "object",
     properties: {
@@ -39,12 +42,12 @@ const carOfferTool = {
   },
 };
 
-const availableCarsTool = {
+const listTool = {
   type: "function" as const,
-  name: "list_available_cars",
+  name: "list_cars_with_offers",
   description:
-    "Lists all cars myAutoAbo can deliver right now, with segment, price, fuel type and terms. " +
-    "Use it to find a similar alternative when the requested car is not found or not available.",
+    "Lists all cars that currently have offers on myAutoAbo, with segment, fuel type, number of offers " +
+    "and cheapest price. Use it to find a similar car when the requested car is not found or has no offers.",
   parameters: {
     type: "object",
     properties: {},
@@ -62,12 +65,11 @@ type FunctionResult = {
 function runTool(name: string, args: Record<string, unknown>) {
   console.log(`[tool] ${name}`, args);
 
-  if (name === "get_car_offer") {
-    const offer = findCarOffer(String(args.car ?? ""));
-    return offer ? { found: true, ...offer } : { found: false };
+  if (name === "compare_car_offers") {
+    return compareCarOffers(String(args.car ?? ""));
   }
-  if (name === "list_available_cars") {
-    return { cars: listAvailableCars() };
+  if (name === "list_cars_with_offers") {
+    return { cars: listCarsWithOffers() };
   }
   return { error: `Unknown tool: ${name}` };
 }
@@ -78,7 +80,7 @@ async function askAgent(input: string | FunctionResult[], previousId?: string) {
     model: MODEL,
     system_instruction: SYSTEM_INSTRUCTION,
     input,
-    tools: [carOfferTool, availableCarsTool],
+    tools: [compareTool, listTool],
     previous_interaction_id: previousId,
     generation_config: { thinking_level: "low", max_output_tokens: 2048 },
   });
@@ -102,7 +104,7 @@ export async function POST(request: Request) {
     const toolCalls: string[] = [];
     let previousId: string | undefined = undefined;
     let nextInput: string | FunctionResult[] =
-      `Write an Instagram post that makes people want to subscribe to the ${car}.`;
+      `Write an Instagram post that makes people want to compare subscription offers for the ${car}.`;
 
     // The agent loop: ask → run requested tools → send results back → repeat
     for (let i = 0; i < MAX_STEPS; i++) {
@@ -151,7 +153,7 @@ export async function POST(request: Request) {
     console.error(error);
 
     const status = (error as { status?: number }).status;
-       if (status === 429) {
+    if (status === 429) {
       return NextResponse.json(
         {
           error:
