@@ -6,7 +6,8 @@ An AI agent that drafts Instagram posts for a **car subscription comparison plat
 
 > Built as a portfolio project for a Werkstudent role at myAutoAbo. All providers and prices are fictional demo data.
 
-![Screenshot of the app](public/screenshot.png)
+![Screenshot of the app](public/screenshot1.png)
+![Screenshot of the review step](public/screenshot2.png)
 
 ## How it works
 
