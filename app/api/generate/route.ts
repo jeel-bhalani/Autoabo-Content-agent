@@ -4,7 +4,8 @@ import { findCarOffer, listAvailableCars } from "@/lib/cars";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-const MODEL = "gemini-3.8-flash";
+const MODEL = "gemini-3.5-flash-lite";
+//const MODEL = "gemini-3.8-flash";
 const MAX_STEPS = 5;
 
 const SYSTEM_INSTRUCTION =
@@ -149,9 +150,13 @@ export async function POST(request: Request) {
     console.error(error);
 
     const status = (error as { status?: number }).status;
-    if (status === 429) {
+       if (status === 429) {
       return NextResponse.json(
-        { error: "Free limit reached. Please wait a minute and try again." },
+        {
+          error:
+            "The AI's free usage limit is reached. It resets daily. " +
+            "Please try again later.",
+        },
         { status: 429 }
       );
     }
