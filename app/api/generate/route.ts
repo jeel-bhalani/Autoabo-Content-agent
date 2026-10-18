@@ -1,7 +1,63 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
+import { findCarOffer } from "@/lib/cars";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+const MODEL = "gemini-3.8-flash";
+const MAX_STEPS = 5;
+
+const SYSTEM_INSTRUCTION =
+  "You are the social media manager of myAutoAbo, a Berlin startup for car subscriptions. " +
+  "You write short, friendly Instagram posts in German, using the informal 'du'. " +
+  "Rules: maximum 120 words, 1-3 emojis, end with 3-5 hashtags. " +
+  "Before writing, ALWAYS call get_car_offer to get our real subscription details. " +
+  "Only use numbers that come from the tool result. Never invent prices or other numbers. " +
+  "If we don't offer the car (found: false), write a short friendly post inviting people to discover our other cars, without any numbers.";
+
+const carOfferTool = {
+  type: "function" as const,
+  name: "get_car_offer",
+  description:
+    "Looks up myAutoAbo's current subscription offer for a car: monthly price in EUR, " +
+    "minimum term in months, included km per month, fuel type and availability. " +
+    "Returns found: false if we don't offer this car.",
+  parameters: {
+    type: "object",
+    properties: {
+      car: { type: "string", description: "Car make and model, e.g. 'VW ID.4'" },
+    },
+    required: ["car"],
+  },
+};
+
+type FunctionResult = {
+  type: "function_result";
+  name: string;
+  call_id: string;
+  result: { type: "text"; text: string }[];
+};
+
+// Runs the tool the AI asked for. The AI never runs code itself: our code decides.
+function runTool(name: string, args: Record<string, unknown>) {
+  if (name === "get_car_offer") {
+    const offer = findCarOffer(String(args.car ?? ""));
+    return offer ? { found: true, ...offer } : { found: false };
+  }
+  return { error: `Unknown tool: ${name}` };
+}
+
+// One request to the AI. All AI settings live here, in one place.
+async function askAgent(input: string | FunctionResult[], previousId?: string) {
+  return ai.interactions.create({
+    model: MODEL,
+    system_instruction: SYSTEM_INSTRUCTION,
+    input,
+    tools: [carOfferTool],
+    previous_interaction_id: previousId,
+    generation_config: { thinking_level: "low", max_output_tokens: 2048 },
+  });
+}
 
 export async function POST(request: Request) {
   const { car } = await request.json();
@@ -11,21 +67,44 @@ export async function POST(request: Request) {
   }
 
   try {
-    const interaction = await ai.interactions.create({
-      model: "gemini-3.8-flash",
-      system_instruction:
-        "You are the social media manager of myAutoAbo, a Berlin startup for car subscriptions. " +
-        "You write short, friendly Instagram posts in German, using the informal 'du'. " +
-        "Rules: maximum 120 words, 1-3 emojis, end with 3-5 hashtags. " +
-        "Never invent technical numbers like range, price or horsepower. If you are not sure, do not mention them.",
-      input: `Write an Instagram post that makes people want to subscribe to the ${car}.`,
-      generation_config: {
-        thinking_level: "low",
-        max_output_tokens: 2048,
-      },
-    });
+    const toolCalls: string[] = [];
+    let previousId: string | undefined = undefined;
+    let nextInput: string | FunctionResult[] =
+      `Write an Instagram post that makes people want to subscribe to the ${car}.`;
 
-    return NextResponse.json({ post: interaction.output_text ?? "" });
+    // The agent loop: ask → run requested tools → send results back → repeat
+    for (let i = 0; i < MAX_STEPS; i++) {
+      const interaction = await askAgent(nextInput, previousId);
+
+      const results: FunctionResult[] = [];
+
+      for (const step of interaction.steps ?? []) {
+        if (step.type === "function_call") {
+          const toolName = step.name ?? "";
+          const result = runTool(toolName, step.arguments ?? {});
+          toolCalls.push(`${toolName}(${JSON.stringify(step.arguments)})`);
+          results.push({
+            type: "function_result",
+            name: toolName,
+            call_id: step.id ?? "",
+            result: [{ type: "text", text: JSON.stringify(result) }],
+          });
+        }
+      }
+
+      // No tool requests = the agent is done and has written the post
+      if (results.length === 0) {
+        return NextResponse.json({ post: interaction.output_text ?? "", toolCalls });
+      }
+
+      nextInput = results;
+      previousId = interaction.id;
+    }
+
+    return NextResponse.json(
+      { error: "The agent needed too many steps. Please try again." },
+      { status: 500 }
+    );
   } catch (error) {
     console.error(error);
 
