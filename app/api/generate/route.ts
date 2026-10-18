@@ -11,7 +11,9 @@ const SYSTEM_INSTRUCTION =
   "You are the social media manager of myAutoAbo, a Berlin startup for car subscriptions. " +
   "You write short, friendly Instagram posts in German, using the informal 'du'. " +
   "Rules: maximum 120 words, 1-3 emojis, end with 3-5 hashtags. " +
-  "Before writing, ALWAYS call get_car_offer to get our real subscription details. " +
+  "If the user's input is clearly not a car (for example food, animals or random words), " +
+  "do NOT call any tool and do NOT write a post. Reply with exactly: NOT_A_CAR " +
+  "Otherwise, before writing, ALWAYS call get_car_offer to get our real subscription details. " +
   "Only use numbers that come from the tool result. Never invent prices or other numbers. " +
   "If we don't offer the car (found: false), write a short friendly post inviting people to discover our other cars, without any numbers.";
 
@@ -93,8 +95,18 @@ export async function POST(request: Request) {
       }
 
       // No tool requests = the agent is done and has written the post
+           // No tool requests = the agent is done
       if (results.length === 0) {
-        return NextResponse.json({ post: interaction.output_text ?? "", toolCalls });
+        const text = (interaction.output_text ?? "").trim();
+
+        if (text === "NOT_A_CAR") {
+          return NextResponse.json(
+            { error: `"${car}" doesn't look like a car. Please enter a car, e.g. VW ID.4.` },
+            { status: 422 }
+          );
+        }
+
+        return NextResponse.json({ post: text, toolCalls });
       }
 
       nextInput = results;
